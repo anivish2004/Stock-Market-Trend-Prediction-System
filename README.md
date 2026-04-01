@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # MarketPulse AI
 
 MarketPulse AI is a professional Streamlit web application for stock market trend prediction using a hybrid Artificial Neural Network and Genetic Algorithm workflow. The system downloads market data, engineers technical indicators, optimizes ANN settings with a GA, predicts bullish, bearish, or neutral direction, and stores prediction history in MongoDB Atlas.
@@ -59,3 +60,6 @@ The application stores prediction runs in the `predictions` collection with:
 ## Important Note
 
 This project is a decision-support prototype for academic and demonstration use. Stock predictions are inherently uncertain and should not be treated as financial advice.
+=======
+# Stock-Market-Trend-Prediction-System
+>>>>>>> 26f26b68d2e146098e722206b31b352e0eff036e
