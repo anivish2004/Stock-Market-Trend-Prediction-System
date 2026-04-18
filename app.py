@@ -16,7 +16,7 @@ from services.model_service import HybridTrendPredictor
 
 st.set_page_config(page_title="MarketPulse AI", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
-PAGES = ["Landing", "Prediction Dashboard", "Model Insights", "History / Logs", "About Project"]
+PAGES = ["Landing", "Prediction Dashboard", "Stock Comparison", "Model Insights", "History / Logs", "About Project"]
 TICKER_OPTIONS = [
     "AAPL",
     "MSFT",
@@ -96,6 +96,7 @@ def get_services() -> tuple[StockDataService, MongoService]:
 def initialize_state() -> None:
     st.session_state.setdefault("active_page", "Landing")
     st.session_state.setdefault("analysis_result", None)
+    st.session_state.setdefault("comparison_result", None)
 
 
 def status_meta(probability: float) -> dict[str, str]:
@@ -108,6 +109,18 @@ def status_meta(probability: float) -> dict[str, str]:
 
 def format_percent(value: float) -> str:
     return f"{value * 100:.2f}%"
+
+
+def clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def comparison_score(metrics: dict[str, Any], snapshot: dict[str, float]) -> float:
+    signal_strength = metrics["probability"]
+    model_quality = (metrics["accuracy"] + metrics["precision"] + metrics["recall"] + metrics["f1_score"]) / 4
+    recent_momentum = clamp(snapshot["daily_change_pct"] / 5, -1.0, 1.0)
+    score = (signal_strength * 0.7) + (model_quality * 0.25) + (max(recent_momentum, 0.0) * 0.05)
+    return float(score)
 
 
 def get_date_bounds(selected_range: tuple[date, date] | list[date] | date) -> tuple[date, date]:
@@ -305,28 +318,47 @@ def render_sidebar() -> dict[str, Any]:
     mongo_error = getattr(mongo_service, "error_message", "")
     with st.sidebar:
         st.markdown("### Trading Controls")
-        selected_ticker = st.selectbox(
-            "Ticker list",
-            options=TICKER_OPTIONS,
-            index=0,
-            help="Search and select a popular ticker, or choose Custom to type any Yahoo Finance symbol.",
-        )
+        default_range = (date.today() - timedelta(days=365), date.today())
+        selected_ticker = ""
         custom_symbol = ""
-        if selected_ticker == "Custom":
-            custom_symbol = st.text_input(
-                "Custom ticker",
-                value="",
-                help="Enter any Yahoo Finance ticker, for example AAPL or RELIANCE.NS.",
+        uploaded_csv = None
+        comparison_symbols: list[str] = []
+        predict_clicked = False
+        compare_clicked = False
+        if st.session_state.active_page == "Stock Comparison":
+            comparison_symbols = st.multiselect(
+                "Compare tickers",
+                options=[ticker for ticker in TICKER_OPTIONS if ticker != "Custom"],
+                default=["AAPL", "MSFT", "NVDA"],
+                max_selections=5,
+                help="Select two or more stocks to rank by model-based buy strength.",
             )
-        uploaded_csv = st.file_uploader(
-            "Offline CSV data",
-            type=["csv"],
-            help="Optional. Upload historical stock data CSV to run the app without internet APIs.",
-        )
-        date_range = st.date_input("Date range", value=(date.today() - timedelta(days=365), date.today()), help="Window used to train the ANN-GA model.")
+            date_range = st.date_input("Comparison range", value=default_range, help="Historical window used to compare all selected stocks.")
+        else:
+            selected_ticker = st.selectbox(
+                "Ticker list",
+                options=TICKER_OPTIONS,
+                index=0,
+                help="Search and select a popular ticker, or choose Custom to type any Yahoo Finance symbol.",
+            )
+            if selected_ticker == "Custom":
+                custom_symbol = st.text_input(
+                    "Custom ticker",
+                    value="",
+                    help="Enter any Yahoo Finance ticker, for example AAPL or RELIANCE.NS.",
+                )
+            uploaded_csv = st.file_uploader(
+                "Offline CSV data",
+                type=["csv"],
+                help="Optional. Upload historical stock data CSV to run the app without internet APIs.",
+            )
+            date_range = st.date_input("Date range", value=default_range, help="Window used to train the ANN-GA model.")
         ga_population = st.slider("GA population", 12, 80, 28, 2, help="More candidates increase search breadth.")
         ga_generations = st.slider("GA generations", 6, 40, 14, 1, help="More generations increase search depth.")
-        predict_clicked = st.button("Run Prediction", use_container_width=True, type="primary")
+        if st.session_state.active_page == "Stock Comparison":
+            compare_clicked = st.button("Compare Stocks", use_container_width=True, type="primary")
+        else:
+            predict_clicked = st.button("Run Prediction", use_container_width=True, type="primary")
         st.markdown("---")
         mongo_status = "Connected" if mongo_service.available else "Offline"
         st.markdown(
@@ -345,10 +377,43 @@ def render_sidebar() -> dict[str, Any]:
     return {
         "symbol": symbol.upper().strip(),
         "uploaded_csv": uploaded_csv,
+        "comparison_symbols": comparison_symbols,
         "date_range": date_range,
         "population": ga_population,
         "generations": ga_generations,
         "predict_clicked": predict_clicked,
+        "compare_clicked": compare_clicked,
+    }
+
+
+def analyze_symbol(
+    symbol: str,
+    start_date: date,
+    end_date: date,
+    population: int,
+    generations: int,
+    stock_service: StockDataService,
+) -> dict[str, Any]:
+    history = stock_service.download_stock_data(
+        symbol=symbol,
+        start=start_date.isoformat(),
+        end=(end_date + timedelta(days=1)).isoformat(),
+    )
+    features = stock_service.build_feature_frame(history)
+    predictor = HybridTrendPredictor(population_size=population, generations=generations, random_state=42)
+    metrics = predictor.fit_predict(features)
+    snapshot = stock_service.current_market_snapshot(history)
+    signal = status_meta(metrics["probability"])
+    score = comparison_score(metrics, snapshot)
+    return {
+        "symbol": symbol,
+        "history": history,
+        "features": features,
+        "metrics": metrics,
+        "snapshot": snapshot,
+        "signal": signal,
+        "score": score,
+        "feature_snapshot": predictor.latest_feature_snapshot(features),
     }
 
 
@@ -376,12 +441,25 @@ def run_prediction(controls: dict[str, Any]) -> None:
                 ].reset_index(drop=True)
                 if history.empty:
                     raise ValueError("The uploaded CSV has no rows inside the selected date range.")
+                predictor = HybridTrendPredictor(population_size=controls["population"], generations=controls["generations"], random_state=42)
+                features = stock_service.build_feature_frame(history)
+                metrics = predictor.fit_predict(features)
+                snapshot = stock_service.current_market_snapshot(history)
+                feature_snapshot = predictor.latest_feature_snapshot(features)
             else:
-                history = stock_service.download_stock_data(symbol=symbol, start=start_date.isoformat(), end=(end_date + timedelta(days=1)).isoformat())
-            features = stock_service.build_feature_frame(history)
-            predictor = HybridTrendPredictor(population_size=controls["population"], generations=controls["generations"], random_state=42)
-            metrics = predictor.fit_predict(features)
-            snapshot = stock_service.current_market_snapshot(history)
+                analysis = analyze_symbol(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    population=controls["population"],
+                    generations=controls["generations"],
+                    stock_service=stock_service,
+                )
+                history = analysis["history"]
+                features = analysis["features"]
+                metrics = analysis["metrics"]
+                snapshot = analysis["snapshot"]
+                feature_snapshot = analysis["feature_snapshot"]
             signal = status_meta(metrics["probability"])
             mongo_service.store_prediction(
                 {
@@ -398,7 +476,7 @@ def run_prediction(controls: dict[str, Any]) -> None:
                     "confusion_matrix": metrics["confusion_matrix"],
                     "created_at": datetime.utcnow(),
                     "market_snapshot": snapshot,
-                    "feature_snapshot": predictor.latest_feature_snapshot(features),
+                    "feature_snapshot": feature_snapshot,
                 }
             )
     except Exception as error:
@@ -417,6 +495,49 @@ def run_prediction(controls: dict[str, Any]) -> None:
         "generated_at": datetime.now(),
     }
     st.session_state.active_page = "Prediction Dashboard"
+
+
+def run_comparison(controls: dict[str, Any]) -> None:
+    symbols = controls.get("comparison_symbols", [])
+    if len(symbols) < 2:
+        st.error("Select at least two stocks to compare.")
+        return
+
+    start_date, end_date = get_date_bounds(controls["date_range"])
+    if end_date <= start_date:
+        st.error("The end date must be later than the start date.")
+        return
+
+    stock_service, _ = get_services()
+    try:
+        with st.spinner("Comparing stocks with the ANN-GA engine and ranking the strongest buy setups..."):
+            results = [
+                analyze_symbol(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    population=controls["population"],
+                    generations=controls["generations"],
+                    stock_service=stock_service,
+                )
+                for symbol in symbols
+            ]
+    except Exception as error:
+        st.error(f"Unable to complete the comparison: {error}")
+        return
+
+    ranked = sorted(
+        results,
+        key=lambda item: (item["score"], item["metrics"]["probability"], item["metrics"]["f1_score"]),
+        reverse=True,
+    )
+    st.session_state.comparison_result = {
+        "ranked": ranked,
+        "date_start": start_date,
+        "date_end": end_date,
+        "generated_at": datetime.now(),
+    }
+    st.session_state.active_page = "Stock Comparison"
 
 
 def render_landing_page() -> None:
@@ -560,6 +681,77 @@ def render_prediction_dashboard() -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+
+def render_stock_comparison_page() -> None:
+    comparison = st.session_state.comparison_result
+    section_heading(
+        "Stock Comparison",
+        "Model-ranked buy comparison",
+        "Compare multiple tickers with the same ANN-GA workflow and rank which one currently looks strongest to buy.",
+    )
+    if comparison is None:
+        st.info("Use the sidebar to choose at least two stocks, then click Compare Stocks.")
+        return
+
+    ranked = comparison["ranked"]
+    best_pick = ranked[0]
+    best_metrics = best_pick["metrics"]
+    best_signal = best_pick["signal"]
+
+    st.markdown(
+        f"""
+        <div class="dashboard-banner">
+            <div>
+                <p class="banner-label">Best Buy Candidate</p>
+                <h2>{best_pick["symbol"]}</h2>
+                <span>{status_chip(best_signal["label"], best_signal["class"])} Ranked highest for the selected comparison window.</span>
+            </div>
+            <div class="timestamp-badge">Updated {comparison["generated_at"].strftime("%d %b %Y, %I:%M %p")}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cards = st.columns(4)
+    with cards[0]:
+        stat_card("Buy Score", f"{best_pick['score'] * 100:.2f}", "Weighted model comparison score", best_signal["class"])
+    with cards[1]:
+        stat_card("Uptrend Probability", format_percent(best_metrics["probability"]), "Model bullish probability")
+    with cards[2]:
+        stat_card("F1 Score", format_percent(best_metrics["f1_score"]), "Prediction balance quality")
+    with cards[3]:
+        tone = "positive" if best_pick["snapshot"]["daily_change_pct"] >= 0 else "negative"
+        stat_card("Daily Change", f"{best_pick['snapshot']['daily_change_pct']:.2f}%", "Most recent close-to-close move", tone)
+
+    table_rows = [
+        {
+            "Rank": index,
+            "Ticker": item["symbol"],
+            "Signal": item["signal"]["label"],
+            "Buy Score": round(item["score"] * 100, 2),
+            "Uptrend Probability": f"{item['metrics']['probability'] * 100:.2f}%",
+            "Accuracy": f"{item['metrics']['accuracy'] * 100:.2f}%",
+            "Precision": f"{item['metrics']['precision'] * 100:.2f}%",
+            "Recall": f"{item['metrics']['recall'] * 100:.2f}%",
+            "F1 Score": f"{item['metrics']['f1_score'] * 100:.2f}%",
+            "Daily Change": f"{item['snapshot']['daily_change_pct']:.2f}%",
+            "Selected Features": ", ".join(item["metrics"]["best_genome"]["selected_features"]),
+        }
+        for index, item in enumerate(ranked, start=1)
+    ]
+    st.markdown("### Ranked Comparison Table")
+    st.dataframe(pd.DataFrame(table_rows), use_container_width=True, hide_index=True)
+    st.caption(
+        "Buy Score = 70% uptrend probability + 25% model quality (accuracy, precision, recall, F1) + 5% recent positive momentum. "
+        "This is a model-based comparison aid, not financial advice."
+    )
+
+    compare_cols = st.columns(2)
+    with compare_cols[0]:
+        st.plotly_chart(build_probability_gauge(best_metrics["probability"]), use_container_width=True)
+    with compare_cols[1]:
+        st.plotly_chart(build_confusion_matrix_figure(best_metrics["confusion_matrix"]), use_container_width=True)
 
 
 def render_model_insights() -> None:
@@ -755,11 +947,15 @@ def main() -> None:
     controls = render_sidebar()
     if controls["predict_clicked"]:
         run_prediction(controls)
+    if controls["compare_clicked"]:
+        run_comparison(controls)
 
     if st.session_state.active_page == "Landing":
         render_landing_page()
     elif st.session_state.active_page == "Prediction Dashboard":
         render_prediction_dashboard()
+    elif st.session_state.active_page == "Stock Comparison":
+        render_stock_comparison_page()
     elif st.session_state.active_page == "Model Insights":
         render_model_insights()
     elif st.session_state.active_page == "History / Logs":
