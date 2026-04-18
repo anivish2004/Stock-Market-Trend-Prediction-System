@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
+
+
+YFINANCE_CACHE_DIR = Path(".cache") / "yfinance"
+YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+yf.set_tz_cache_location(str(YFINANCE_CACHE_DIR.resolve()))
+
+for proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+    if os.environ.get(proxy_key) == "http://127.0.0.1:9":
+        os.environ.pop(proxy_key, None)
 
 
 class StockDataService:
