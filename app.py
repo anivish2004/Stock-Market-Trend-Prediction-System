@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+import pickle
 from typing import Any
 
 import pandas as pd
@@ -17,6 +18,19 @@ from services.model_service import HybridTrendPredictor
 st.set_page_config(page_title="MarketPulse AI", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 PAGES = ["Landing", "Prediction Dashboard", "Stock Comparison", "Model Insights", "History / Logs", "About Project"]
+APP_STATE_PATH = Path(".cache") / "app_state.pkl"
+PERSISTED_STATE_KEYS = (
+    "active_page",
+    "analysis_result",
+    "comparison_result",
+    "selected_ticker",
+    "custom_symbol",
+    "comparison_symbols",
+    "single_date_range",
+    "comparison_date_range",
+    "ga_population",
+    "ga_generations",
+)
 TICKER_OPTIONS = [
     "AAPL",
     "MSFT",
@@ -93,10 +107,39 @@ def get_services() -> tuple[StockDataService, MongoService]:
     return StockDataService(config.alpha_vantage_api_key), MongoService(config.mongo_uri, config.database_name)
 
 
+def load_persisted_state() -> dict[str, Any]:
+    if not APP_STATE_PATH.exists():
+        return {}
+    try:
+        with APP_STATE_PATH.open("rb") as state_file:
+            payload = pickle.load(state_file)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def persist_state() -> None:
+    APP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {key: st.session_state.get(key) for key in PERSISTED_STATE_KEYS}
+    with APP_STATE_PATH.open("wb") as state_file:
+        pickle.dump(payload, state_file)
+
+
 def initialize_state() -> None:
+    for key, value in load_persisted_state().items():
+        st.session_state.setdefault(key, value)
+
+    default_range = (date.today() - timedelta(days=365), date.today())
     st.session_state.setdefault("active_page", "Landing")
     st.session_state.setdefault("analysis_result", None)
     st.session_state.setdefault("comparison_result", None)
+    st.session_state.setdefault("selected_ticker", "AAPL")
+    st.session_state.setdefault("custom_symbol", "")
+    st.session_state.setdefault("comparison_symbols", ["AAPL", "MSFT", "NVDA"])
+    st.session_state.setdefault("single_date_range", default_range)
+    st.session_state.setdefault("comparison_date_range", default_range)
+    st.session_state.setdefault("ga_population", 28)
+    st.session_state.setdefault("ga_generations", 14)
 
 
 def status_meta(probability: float) -> dict[str, str]:
@@ -318,7 +361,6 @@ def render_sidebar() -> dict[str, Any]:
     mongo_error = getattr(mongo_service, "error_message", "")
     with st.sidebar:
         st.markdown("### Trading Controls")
-        default_range = (date.today() - timedelta(days=365), date.today())
         selected_ticker = ""
         custom_symbol = ""
         uploaded_csv = None
@@ -329,32 +371,61 @@ def render_sidebar() -> dict[str, Any]:
             comparison_symbols = st.multiselect(
                 "Compare tickers",
                 options=[ticker for ticker in TICKER_OPTIONS if ticker != "Custom"],
-                default=["AAPL", "MSFT", "NVDA"],
+                default=st.session_state["comparison_symbols"],
                 max_selections=5,
                 help="Select two or more stocks to rank by model-based buy strength.",
+                key="comparison_symbols",
             )
-            date_range = st.date_input("Comparison range", value=default_range, help="Historical window used to compare all selected stocks.")
+            date_range = st.date_input(
+                "Comparison range",
+                value=st.session_state["comparison_date_range"],
+                help="Historical window used to compare all selected stocks.",
+                key="comparison_date_range",
+            )
         else:
             selected_ticker = st.selectbox(
                 "Ticker list",
                 options=TICKER_OPTIONS,
-                index=0,
+                index=TICKER_OPTIONS.index(st.session_state["selected_ticker"]) if st.session_state["selected_ticker"] in TICKER_OPTIONS else 0,
                 help="Search and select a popular ticker, or choose Custom to type any Yahoo Finance symbol.",
+                key="selected_ticker",
             )
             if selected_ticker == "Custom":
                 custom_symbol = st.text_input(
                     "Custom ticker",
-                    value="",
+                    value=st.session_state["custom_symbol"],
                     help="Enter any Yahoo Finance ticker, for example AAPL or RELIANCE.NS.",
+                    key="custom_symbol",
                 )
             uploaded_csv = st.file_uploader(
                 "Offline CSV data",
                 type=["csv"],
                 help="Optional. Upload historical stock data CSV to run the app without internet APIs.",
             )
-            date_range = st.date_input("Date range", value=default_range, help="Window used to train the ANN-GA model.")
-        ga_population = st.slider("GA population", 12, 80, 28, 2, help="More candidates increase search breadth.")
-        ga_generations = st.slider("GA generations", 6, 40, 14, 1, help="More generations increase search depth.")
+            date_range = st.date_input(
+                "Date range",
+                value=st.session_state["single_date_range"],
+                help="Window used to train the ANN-GA model.",
+                key="single_date_range",
+            )
+        ga_population = st.slider(
+            "GA population",
+            12,
+            80,
+            st.session_state["ga_population"],
+            2,
+            help="More candidates increase search breadth.",
+            key="ga_population",
+        )
+        ga_generations = st.slider(
+            "GA generations",
+            6,
+            40,
+            st.session_state["ga_generations"],
+            1,
+            help="More generations increase search depth.",
+            key="ga_generations",
+        )
         if st.session_state.active_page == "Stock Comparison":
             compare_clicked = st.button("Compare Stocks", use_container_width=True, type="primary")
         else:
@@ -366,7 +437,7 @@ def render_sidebar() -> dict[str, Any]:
             <div class="sidebar-card">
                 <div class="sidebar-row"><span>Database</span><strong>{mongo_status}</strong></div>
                 <div class="sidebar-row"><span>Model</span><strong>ANN + GA</strong></div>
-                <div class="sidebar-row"><span>Feed</span><strong>Yahoo Finance</strong></div>
+                <div class="sidebar-row"><span>Feed</span><strong>Alpha Vantage</strong></div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -530,7 +601,7 @@ def run_comparison(controls: dict[str, Any]) -> None:
     if len(results) < 2:
         if failures:
             st.error(
-                "Unable to complete the comparison because too few stocks returned usable Yahoo Finance data. "
+                "Unable to complete the comparison because too few stocks returned usable Alpha Vantage data. "
                 f"Failures: {' | '.join(failures)}"
             )
         else:
@@ -579,14 +650,17 @@ def render_landing_page() -> None:
     with c1:
         if st.button("Predict Stock", use_container_width=True, type="primary"):
             st.session_state.active_page = "Prediction Dashboard"
+            persist_state()
             st.rerun()
     with c2:
         if st.button("View Dashboard", use_container_width=True):
             st.session_state.active_page = "Prediction Dashboard"
+            persist_state()
             st.rerun()
     with c3:
         if st.button("Model Performance", use_container_width=True):
             st.session_state.active_page = "Model Insights"
+            persist_state()
             st.rerun()
 
     section_heading("Platform Highlights", "A premium financial workspace with a focused signal path.", "Every section is designed to keep charts dominant, metrics compact, and decision context easy to scan.")
@@ -602,7 +676,7 @@ def render_landing_page() -> None:
     st.markdown(
         """
         <div class="process-strip">
-            <div><span>1</span><strong>Fetch</strong><p>Historical OHLCV data from Yahoo Finance.</p></div>
+            <div><span>1</span><strong>Fetch</strong><p>Historical OHLCV data from Alpha Vantage.</p></div>
             <div><span>2</span><strong>Engineer</strong><p>SMA, EMA, RSI, MACD, volatility, momentum.</p></div>
             <div><span>3</span><strong>Optimize</strong><p>Genetic search tunes features and ANN settings.</p></div>
             <div><span>4</span><strong>Log</strong><p>Store output and metrics in MongoDB Atlas.</p></div>
@@ -709,7 +783,7 @@ def render_stock_comparison_page() -> None:
     failures = comparison.get("failures", [])
     if failures:
         st.warning(
-            "Some selected stocks could not be compared with Yahoo Finance data and were skipped: "
+            "Some selected stocks could not be compared with Alpha Vantage data and were skipped: "
             + " | ".join(failures)
         )
 
@@ -971,7 +1045,7 @@ def render_about_page() -> None:
         st.markdown(
             """
             <div class="about-grid">
-                <div><span>Data Source</span><strong>Yahoo Finance via yfinance</strong></div>
+                <div><span>Data Source</span><strong>Alpha Vantage API</strong></div>
                 <div><span>Database</span><strong>MongoDB Atlas</strong></div>
                 <div><span>Model</span><strong>MLP ANN + Genetic search</strong></div>
                 <div><span>Charts</span><strong>Plotly candlestick, RSI, MACD</strong></div>
@@ -1004,6 +1078,7 @@ def main() -> None:
         render_history_page()
     else:
         render_about_page()
+    persist_state()
 
 
 if __name__ == "__main__":
