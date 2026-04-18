@@ -766,6 +766,29 @@ def render_stock_comparison_page() -> None:
         "This is a model-based comparison aid, not financial advice."
     )
 
+    st.markdown("### Side-by-Side Comparison")
+    comparison_columns = st.columns(len(ranked))
+    for column, item, rank in zip(comparison_columns, ranked, range(1, len(ranked) + 1)):
+        with column:
+            st.markdown(
+                f"""
+                <div class="note-card">
+                    <strong>#{rank} {item["symbol"]}</strong>
+                    <p>{status_chip(item["signal"]["label"], item["signal"]["class"])} Buy Score {item["score"] * 100:.2f}</p>
+                    <div class="history-grid">
+                        <span>Uptrend Probability <strong>{item["metrics"]["probability"] * 100:.2f}%</strong></span>
+                        <span>Accuracy <strong>{item["metrics"]["accuracy"] * 100:.2f}%</strong></span>
+                        <span>Precision <strong>{item["metrics"]["precision"] * 100:.2f}%</strong></span>
+                        <span>Recall <strong>{item["metrics"]["recall"] * 100:.2f}%</strong></span>
+                        <span>F1 Score <strong>{item["metrics"]["f1_score"] * 100:.2f}%</strong></span>
+                        <span>Daily Change <strong>{item["snapshot"]["daily_change_pct"]:.2f}%</strong></span>
+                    </div>
+                    <p><strong>Selected Features:</strong> {", ".join(item["metrics"]["best_genome"]["selected_features"])}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
     compare_cols = st.columns(2)
     with compare_cols[0]:
         st.plotly_chart(build_probability_gauge(best_metrics["probability"]), use_container_width=True)
