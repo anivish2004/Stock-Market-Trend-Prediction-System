@@ -90,7 +90,7 @@ def load_styles() -> None:
 @st.cache_resource(show_spinner=False)
 def get_services() -> tuple[StockDataService, MongoService]:
     config = AppConfig()
-    return StockDataService(config.alpha_vantage_api_key), MongoService(config.mongo_uri, config.database_name)
+    return StockDataService(), MongoService(config.mongo_uri, config.database_name)
 
 
 def initialize_state() -> None:

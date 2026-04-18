@@ -22,7 +22,7 @@ The application helps users:
 - Stock comparison workflow that ranks multiple tickers with a model-based buy score
 - MongoDB Atlas integration for storing prediction history
 - Optional CSV upload support for offline demos or testing
-- Yahoo Finance data retrieval with Alpha Vantage fallback support in code
+- Yahoo Finance data retrieval for live market history
 
 ## Tech Stack
 
@@ -180,13 +180,12 @@ Example:
 ```env
 MONGO_URI=mongodb+srv://<username>:<password>@<cluster-url>/<database>?retryWrites=true&w=majority
 MONGO_DB_NAME=your_database_name
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key
 ```
 
 Notes:
 
 - `MONGO_URI` and `MONGO_DB_NAME` are needed for history storage
-- `ALPHA_VANTAGE_API_KEY` is optional and acts as a fallback if Yahoo Finance fails
+- live market data in this project is fetched from Yahoo Finance through `yfinance`
 
 ### 5. Run the app
 

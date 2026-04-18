@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import json
 import time
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import urlopen
 
 import numpy as np
 import pandas as pd
@@ -13,9 +9,6 @@ import yfinance as yf
 
 
 class StockDataService:
-    def __init__(self, alpha_vantage_api_key: str = "") -> None:
-        self.alpha_vantage_api_key = alpha_vantage_api_key.strip()
-
     @st.cache_data(show_spinner=False, ttl=900)
     def _cached_yahoo_download(
         _self,
@@ -28,45 +21,6 @@ class StockDataService:
         if isinstance(frame.columns, pd.MultiIndex):
             frame.columns = frame.columns.get_level_values(0)
         return frame
-
-    @st.cache_data(show_spinner=False, ttl=900)
-    def _cached_alpha_vantage_download(_self, symbol: str, api_key: str) -> pd.DataFrame:
-        params = {
-            "function": "TIME_SERIES_DAILY_ADJUSTED",
-            "symbol": symbol,
-            "outputsize": "full",
-            "apikey": api_key,
-        }
-        url = f"https://www.alphavantage.co/query?{urlencode(params)}"
-        with urlopen(url, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-
-        if "Error Message" in payload:
-            raise ValueError(payload["Error Message"])
-        if "Note" in payload:
-            raise ValueError(payload["Note"])
-
-        series = payload.get("Time Series (Daily)", {})
-        if not series:
-            return pd.DataFrame()
-
-        rows: list[dict[str, float | str]] = []
-        for raw_date, values in series.items():
-            rows.append(
-                {
-                    "Date": raw_date,
-                    "Open": float(values["1. open"]),
-                    "High": float(values["2. high"]),
-                    "Low": float(values["3. low"]),
-                    "Close": float(values["4. close"]),
-                    "Adj Close": float(values["5. adjusted close"]),
-                    "Volume": float(values["6. volume"]),
-                }
-            )
-
-        frame = pd.DataFrame(rows)
-        frame["Date"] = pd.to_datetime(frame["Date"])
-        return frame.sort_values("Date").reset_index(drop=True)
 
     def download_stock_data(
         self,
@@ -87,23 +41,13 @@ class StockDataService:
                 last_error = error
             time.sleep(1.5 * (attempt + 1))
 
-        if self.alpha_vantage_api_key:
-            fallback = self._download_from_alpha_vantage(symbol)
-            if not fallback.empty:
-                if start:
-                    fallback = fallback[fallback["Date"] >= pd.to_datetime(start)]
-                if end:
-                    fallback = fallback[fallback["Date"] <= pd.to_datetime(end)]
-                return fallback.reset_index(drop=True)
-
         if last_error:
             raise ValueError(
-                "Stock data could not be fetched right now. Yahoo Finance may be rate-limiting requests. "
-                "Add ALPHA_VANTAGE_API_KEY in .env to enable fallback data."
+                "Stock data could not be fetched from Yahoo Finance right now. "
+                "Verify the ticker, internet connection, or try again in a moment."
             ) from last_error
         raise ValueError(
-            "No historical data returned. Verify the stock ticker and try again. "
-            "If Yahoo Finance keeps rate-limiting, add ALPHA_VANTAGE_API_KEY in .env."
+            "No historical data returned from Yahoo Finance. Verify the stock ticker and try again."
         )
 
     def build_feature_frame(self, history: pd.DataFrame) -> pd.DataFrame:
@@ -137,12 +81,6 @@ class StockDataService:
             "volume": float(latest["Volume"]),
             "daily_change_pct": float(daily_change),
         }
-
-    def _download_from_alpha_vantage(self, symbol: str) -> pd.DataFrame:
-        try:
-            return self._cached_alpha_vantage_download(symbol=symbol, api_key=self.alpha_vantage_api_key)
-        except (ValueError, HTTPError, URLError):
-            return pd.DataFrame()
 
     @staticmethod
     def _relative_strength_index(series: pd.Series, window: int = 14) -> pd.Series:
