@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
+import json
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import numpy as np
 import pandas as pd
 import streamlit as st
-import yfinance as yf
-
-
-YFINANCE_CACHE_DIR = Path(".cache") / "yfinance"
-YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-yf.set_tz_cache_location(str(YFINANCE_CACHE_DIR.resolve()))
 
 for proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
     if os.environ.get(proxy_key) == "http://127.0.0.1:9":
@@ -20,18 +16,51 @@ for proxy_key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https
 
 
 class StockDataService:
+    def __init__(self, alpha_vantage_api_key: str) -> None:
+        self.alpha_vantage_api_key = alpha_vantage_api_key.strip()
+
     @st.cache_data(show_spinner=False, ttl=900)
-    def _cached_yahoo_download(
+    def _cached_alpha_vantage_download(
         _self,
         symbol: str,
-        period: str | None = None,
-        start: str | None = None,
-        end: str | None = None,
+        api_key: str,
     ) -> pd.DataFrame:
-        frame = yf.download(symbol, period=period, start=start, end=end, progress=False, auto_adjust=False)
-        if isinstance(frame.columns, pd.MultiIndex):
-            frame.columns = frame.columns.get_level_values(0)
-        return frame
+        params = {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": symbol,
+            "outputsize": "compact",
+            "apikey": api_key,
+        }
+        url = f"https://www.alphavantage.co/query?{urlencode(params)}"
+        with urlopen(url, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        if "Error Message" in payload:
+            raise ValueError(payload["Error Message"])
+        if "Note" in payload:
+            raise ValueError(payload["Note"])
+
+        series = payload.get("Time Series (Daily)", {})
+        if not series:
+            return pd.DataFrame()
+
+        rows: list[dict[str, float | str]] = []
+        for raw_date, values in series.items():
+            rows.append(
+                {
+                    "Date": raw_date,
+                    "Open": float(values["1. open"]),
+                    "High": float(values["2. high"]),
+                    "Low": float(values["3. low"]),
+                    "Close": float(values["4. close"]),
+                    "Adj Close": float(values["4. close"]),
+                    "Volume": float(values["5. volume"]),
+                }
+            )
+
+        frame = pd.DataFrame(rows)
+        frame["Date"] = pd.to_datetime(frame["Date"])
+        return frame.sort_values("Date").reset_index(drop=True)
 
     def download_stock_data(
         self,
@@ -40,25 +69,32 @@ class StockDataService:
         start: str | None = None,
         end: str | None = None,
     ) -> pd.DataFrame:
-        frame = pd.DataFrame()
+        if not self.alpha_vantage_api_key:
+            raise ValueError("ALPHA_VANTAGE_API_KEY is missing. Add it in your .env file.")
+
         last_error: Exception | None = None
 
         for attempt in range(3):
             try:
-                frame = self._cached_yahoo_download(symbol=symbol, period=period, start=start, end=end)
+                frame = self._cached_alpha_vantage_download(symbol=symbol, api_key=self.alpha_vantage_api_key)
                 if not frame.empty:
-                    return frame.reset_index()
+                    if start:
+                        frame = frame[frame["Date"] >= pd.to_datetime(start)]
+                    if end:
+                        frame = frame[frame["Date"] <= pd.to_datetime(end)]
+                    if not frame.empty:
+                        return frame.reset_index(drop=True)
             except Exception as error:
                 last_error = error
-            time.sleep(1.5 * (attempt + 1))
+            time.sleep(12 if attempt == 0 else 18)
 
         if last_error:
             raise ValueError(
-                "Stock data could not be fetched from Yahoo Finance right now. "
-                "Verify the ticker, internet connection, or try again in a moment."
+                "Stock data could not be fetched from Alpha Vantage right now. "
+                "Verify the ticker, API key, or wait a moment if the API limit was reached."
             ) from last_error
         raise ValueError(
-            "No historical data returned from Yahoo Finance. Verify the stock ticker and try again."
+            "No historical data returned from Alpha Vantage. Verify the stock ticker and try again."
         )
 
     def build_feature_frame(self, history: pd.DataFrame) -> pd.DataFrame:

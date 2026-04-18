@@ -17,3 +17,4 @@ load_dotenv()
 class AppConfig:
     mongo_uri: str = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
     database_name: str = os.getenv("MONGO_DB_NAME", "quantumvest_ai")
+    alpha_vantage_api_key: str = os.getenv("ALPHA_VANTAGE_API_KEY", "")

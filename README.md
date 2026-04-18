@@ -6,7 +6,7 @@ MarketPulse AI is a Streamlit-based stock analysis application that combines tec
 
 The application helps users:
 
-- fetch historical stock data from Yahoo Finance
+- fetch historical stock data from Alpha Vantage
 - upload offline CSV data for analysis
 - engineer technical indicators such as SMA, EMA, RSI, MACD, volatility, momentum, and volume trend
 - run a hybrid GA + ANN workflow to predict the next-session direction
@@ -22,7 +22,7 @@ The application helps users:
 - Stock comparison workflow that ranks multiple tickers with a model-based buy score
 - MongoDB Atlas integration for storing prediction history
 - Optional CSV upload support for offline demos or testing
-- Yahoo Finance data retrieval for live market history
+- Alpha Vantage data retrieval for live market history
 
 ## Tech Stack
 
@@ -62,7 +62,7 @@ The application helps users:
 ## How The Workflow Operates
 
 1. The user selects a ticker or uploads a CSV file.
-2. Historical OHLCV data is loaded from Yahoo Finance or from the uploaded file.
+2. Historical OHLCV data is loaded from Alpha Vantage or from the uploaded file.
 3. Technical indicators are generated from the raw price data.
 4. The model creates a target label based on whether the next closing price is higher than the current one.
 5. A Genetic Algorithm searches for a strong feature subset and neural-network configuration.
@@ -180,12 +180,13 @@ Example:
 ```env
 MONGO_URI=mongodb+srv://<username>:<password>@<cluster-url>/<database>?retryWrites=true&w=majority
 MONGO_DB_NAME=your_database_name
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key
 ```
 
 Notes:
 
 - `MONGO_URI` and `MONGO_DB_NAME` are needed for history storage
-- live market data in this project is fetched from Yahoo Finance through `yfinance`
+- `ALPHA_VANTAGE_API_KEY` is required for live market data
 
 ### 5. Run the app
 
