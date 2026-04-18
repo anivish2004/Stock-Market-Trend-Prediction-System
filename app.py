@@ -371,14 +371,12 @@ def render_sidebar() -> dict[str, Any]:
             comparison_symbols = st.multiselect(
                 "Compare tickers",
                 options=[ticker for ticker in TICKER_OPTIONS if ticker != "Custom"],
-                default=st.session_state["comparison_symbols"],
                 max_selections=5,
                 help="Select two or more stocks to rank by model-based buy strength.",
                 key="comparison_symbols",
             )
             date_range = st.date_input(
                 "Comparison range",
-                value=st.session_state["comparison_date_range"],
                 help="Historical window used to compare all selected stocks.",
                 key="comparison_date_range",
             )
@@ -386,14 +384,12 @@ def render_sidebar() -> dict[str, Any]:
             selected_ticker = st.selectbox(
                 "Ticker list",
                 options=TICKER_OPTIONS,
-                index=TICKER_OPTIONS.index(st.session_state["selected_ticker"]) if st.session_state["selected_ticker"] in TICKER_OPTIONS else 0,
                 help="Search and select a popular ticker, or choose Custom to type any Yahoo Finance symbol.",
                 key="selected_ticker",
             )
             if selected_ticker == "Custom":
                 custom_symbol = st.text_input(
                     "Custom ticker",
-                    value=st.session_state["custom_symbol"],
                     help="Enter any Yahoo Finance ticker, for example AAPL or RELIANCE.NS.",
                     key="custom_symbol",
                 )
@@ -404,7 +400,6 @@ def render_sidebar() -> dict[str, Any]:
             )
             date_range = st.date_input(
                 "Date range",
-                value=st.session_state["single_date_range"],
                 help="Window used to train the ANN-GA model.",
                 key="single_date_range",
             )
@@ -412,7 +407,6 @@ def render_sidebar() -> dict[str, Any]:
             "GA population",
             12,
             80,
-            st.session_state["ga_population"],
             2,
             help="More candidates increase search breadth.",
             key="ga_population",
@@ -421,7 +415,6 @@ def render_sidebar() -> dict[str, Any]:
             "GA generations",
             6,
             40,
-            st.session_state["ga_generations"],
             1,
             help="More generations increase search depth.",
             key="ga_generations",
