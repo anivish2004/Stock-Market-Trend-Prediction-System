@@ -509,21 +509,32 @@ def run_comparison(controls: dict[str, Any]) -> None:
         return
 
     stock_service, _ = get_services()
-    try:
-        with st.spinner("Comparing stocks with the ANN-GA engine and ranking the strongest buy setups..."):
-            results = [
-                analyze_symbol(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    population=controls["population"],
-                    generations=controls["generations"],
-                    stock_service=stock_service,
+    results: list[dict[str, Any]] = []
+    failures: list[str] = []
+    with st.spinner("Comparing stocks with the ANN-GA engine and ranking the strongest buy setups..."):
+        for symbol in symbols:
+            try:
+                results.append(
+                    analyze_symbol(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                        population=controls["population"],
+                        generations=controls["generations"],
+                        stock_service=stock_service,
+                    )
                 )
-                for symbol in symbols
-            ]
-    except Exception as error:
-        st.error(f"Unable to complete the comparison: {error}")
+            except Exception as error:
+                failures.append(f"{symbol}: {error}")
+
+    if len(results) < 2:
+        if failures:
+            st.error(
+                "Unable to complete the comparison because too few stocks returned usable Yahoo Finance data. "
+                f"Failures: {' | '.join(failures)}"
+            )
+        else:
+            st.error("Unable to complete the comparison because too few stocks returned usable data.")
         return
 
     ranked = sorted(
@@ -533,6 +544,7 @@ def run_comparison(controls: dict[str, Any]) -> None:
     )
     st.session_state.comparison_result = {
         "ranked": ranked,
+        "failures": failures,
         "date_start": start_date,
         "date_end": end_date,
         "generated_at": datetime.now(),
@@ -693,6 +705,13 @@ def render_stock_comparison_page() -> None:
     if comparison is None:
         st.info("Use the sidebar to choose at least two stocks, then click Compare Stocks.")
         return
+
+    failures = comparison.get("failures", [])
+    if failures:
+        st.warning(
+            "Some selected stocks could not be compared with Yahoo Finance data and were skipped: "
+            + " | ".join(failures)
+        )
 
     ranked = comparison["ranked"]
     best_pick = ranked[0]
