@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 import pickle
 from typing import Any
@@ -538,7 +538,7 @@ def run_prediction(controls: dict[str, Any]) -> None:
                     "f1_score": round(metrics["f1_score"], 4),
                     "best_genome": metrics["best_genome"],
                     "confusion_matrix": metrics["confusion_matrix"],
-                    "created_at": datetime.utcnow(),
+                    "created_at": datetime.now(UTC),
                     "market_snapshot": snapshot,
                     "feature_snapshot": feature_snapshot,
                 }
@@ -904,17 +904,19 @@ def render_model_insights() -> None:
     bottom = st.columns([1.05, 1])
     with bottom[0]:
         st.markdown("### Optimization Outcome")
+        optimization_frame = pd.DataFrame(
+            [
+                {"Setting": "Hidden layer size", "Value": genome["hidden_layer_size"]},
+                {"Setting": "Activation", "Value": genome["activation"]},
+                {"Setting": "Learning rate", "Value": genome["learning_rate_init"]},
+                {"Setting": "Selected features", "Value": ", ".join(genome["selected_features"])},
+                {"Setting": "Training samples", "Value": metrics["training_samples"]},
+                {"Setting": "Test samples", "Value": metrics["test_samples"]},
+            ]
+        )
+        optimization_frame["Value"] = optimization_frame["Value"].astype(str)
         st.dataframe(
-            pd.DataFrame(
-                [
-                    {"Setting": "Hidden layer size", "Value": genome["hidden_layer_size"]},
-                    {"Setting": "Activation", "Value": genome["activation"]},
-                    {"Setting": "Learning rate", "Value": genome["learning_rate_init"]},
-                    {"Setting": "Selected features", "Value": ", ".join(genome["selected_features"])},
-                    {"Setting": "Training samples", "Value": metrics["training_samples"]},
-                    {"Setting": "Test samples", "Value": metrics["test_samples"]},
-                ]
-            ),
+            optimization_frame,
             use_container_width=True,
             hide_index=True,
         )
