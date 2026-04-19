@@ -24,3 +24,6 @@ build/
 
 # Local runtime files
 *.log
+
+# Cache files
+.cache/

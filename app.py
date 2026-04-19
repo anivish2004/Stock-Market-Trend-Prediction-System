@@ -407,7 +407,7 @@ def render_sidebar() -> dict[str, Any]:
             "GA population",
             12,
             80,
-            2,
+            step=2,
             help="More candidates increase search breadth.",
             key="ga_population",
         )
@@ -415,7 +415,7 @@ def render_sidebar() -> dict[str, Any]:
             "GA generations",
             6,
             40,
-            1,
+            step=1,
             help="More generations increase search depth.",
             key="ga_generations",
         )
